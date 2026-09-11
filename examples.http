@@ -1,0 +1,29 @@
+### Health
+GET http://localhost:3000/api/health
+
+### Create reminder through chatbot endpoint
+POST http://localhost:3000/api/chat
+Content-Type: application/json
+
+{
+  "phone": "919876543210",
+  "message": "Remind me tomorrow at 8 PM to complete my physics assignment"
+}
+
+### List reminders
+POST http://localhost:3000/api/chat
+Content-Type: application/json
+
+{
+  "phone": "919876543210",
+  "message": "What are my reminders?"
+}
+
+### Cancel reminder
+POST http://localhost:3000/api/chat
+Content-Type: application/json
+
+{
+  "phone": "919876543210",
+  "message": "Cancel reminder REM-ABC123"
+}
