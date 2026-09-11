@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Reminder Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <div>
+        <p class="eyebrow">WHATSAPP AI REMINDER</p>
+        <h1>Reminder Dashboard</h1>
+        <p class="muted">Fast2SMS · Gemini · MongoDB · Cron</p>
+      </div>
+      <button id="refresh">Refresh</button>
+    </header>
+
+    <section class="stats" id="stats">
+      <div class="card"><span>Total</span><strong id="total">—</strong></div>
+      <div class="card"><span>Scheduled</span><strong id="scheduled">—</strong></div>
+      <div class="card"><span>Sent</span><strong id="sent">—</strong></div>
+      <div class="card"><span>Failed</span><strong id="failed">—</strong></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Upcoming / Recent Reminders</h2>
+        <select id="status">
+          <option value="">All</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="processing">Processing</option>
+          <option value="sent">Sent</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+
+      <div id="message" class="muted"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Phone</th>
+              <th>Reminder</th>
+              <th>Scheduled</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="reminders"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
