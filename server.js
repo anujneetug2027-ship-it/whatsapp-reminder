@@ -34,7 +34,7 @@ app.use("/api/webhook", webhookRoutes);
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.get("*", (req, res, next) => {
+app.get("/{*splat}", (req, res, next) => {
   if (req.path.startsWith("/api/")) return next();
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
