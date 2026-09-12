@@ -7,47 +7,84 @@ if (!apiKey) {
   console.warn("GEMINI_API_KEY is not configured.");
 }
 
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+const ai = apiKey
+  ? new GoogleGenAI({ apiKey })
+  : null;
 
-const reminderSchema = {
+const responseSchema = {
   type: Type.OBJECT,
   properties: {
     intent: {
       type: Type.STRING,
-      enum: ["create_reminder", "list_reminders", "cancel_reminder", "edit_reminder", "clarify", "unknown"]
+      enum: [
+        "create_reminder",
+        "list_reminders",
+        "next_reminder",
+        "cancel_reminder",
+        "edit_reminder",
+        "clarify",
+        "unknown"
+      ]
     },
+
     message: {
       type: Type.STRING,
-      description: "The concise action/task to remind the user about. Empty when not applicable."
+      description:
+        "The task to remind the user about. Empty when not applicable."
     },
+
     scheduled_for_iso: {
       type: Type.STRING,
-      description: "An ISO 8601 datetime with timezone offset when a precise reminder time is known. Empty when clarification is required."
+      description:
+        "ISO datetime with timezone offset. Empty when not applicable."
     },
+
     timezone: {
       type: Type.STRING,
-      description: "IANA timezone such as Asia/Kolkata."
+      description:
+        "IANA timezone such as Asia/Kolkata."
     },
+
     reminder_id: {
       type: Type.STRING,
-      description: "Reminder ID if the user explicitly gives one. Otherwise empty."
+      description:
+        "Reminder ID if the user explicitly mentions one."
     },
+
     search_text: {
       type: Type.STRING,
-      description: "Text identifying a reminder to cancel/edit, if needed."
+      description:
+        "Words identifying a reminder to cancel."
     },
+
     clarification_question: {
       type: Type.STRING,
-      description: "Short question to ask when essential information is missing or ambiguous."
+      description:
+        "A short question if more information is required."
+    },
+
+    creative_reply: {
+      type: Type.STRING,
+      description:
+        "A short, friendly, creative response. Do not invent IDs, dates, or database results."
     }
   },
-  required: ["intent", "message", "scheduled_for_iso", "timezone", "reminder_id", "search_text", "clarification_question"]
+
+  required: [
+    "intent",
+    "message",
+    "scheduled_for_iso",
+    "timezone",
+    "reminder_id",
+    "search_text",
+    "clarification_question",
+    "creative_reply"
+  ]
 };
 
-function getNowContext(timeZone) {
-  const now = new Date();
+function getLocalDateTime(timezone) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
+    timeZone: timezone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -58,51 +95,97 @@ function getNowContext(timeZone) {
     hour12: false
   });
 
-  return formatter.format(now);
+  return formatter.format(new Date());
 }
 
 export async function parseUserMessage({ text, timezone }) {
-  if (!ai) throw new Error("Gemini is not configured.");
+  if (!ai) {
+    throw new Error("Gemini is not configured.");
+  }
 
-  const tz = timezone || process.env.DEFAULT_TIMEZONE || "Asia/Kolkata";
-  const now = new Date().toISOString();
-  const localNow = getNowContext(tz);
+  const userTimezone =
+    timezone ||
+    process.env.DEFAULT_TIMEZONE ||
+    "Asia/Kolkata";
+
+  const currentUtc = new Date().toISOString();
+  const currentLocal = getLocalDateTime(userTimezone);
 
   const prompt = `
-You are the intent and time parser for a WhatsApp reminder bot.
+You are a smart, friendly WhatsApp reminder assistant.
 
 User message:
 """${text}"""
 
-User timezone: ${tz}
-Current UTC time: ${now}
-Current local date/time in that timezone: ${localNow}
+User timezone: ${userTimezone}
+Current UTC time: ${currentUtc}
+Current local date and time: ${currentLocal}
+
+Identify the user's intent and return only valid JSON.
+
+Supported intents:
+
+create_reminder:
+The user wants to create a reminder.
+
+list_reminders:
+The user wants to see all active reminders.
+Examples:
+- list my reminders
+- show my reminders
+- what reminders do I have?
+
+next_reminder:
+The user wants to know their nearest upcoming reminder.
+Examples:
+- what is my next reminder?
+- when is my next reminder?
+- tell me my upcoming reminder
+
+cancel_reminder:
+The user wants to cancel an existing reminder.
+
+edit_reminder:
+The user wants to edit an existing reminder.
+
+clarify:
+Important information is missing or ambiguous.
+
+unknown:
+The message is unrelated to the reminder system.
 
 Rules:
-1. Return ONLY the requested JSON structure.
-2. For a create_reminder intent, extract the actual task as "message".
-3. Resolve relative dates/times such as "in 2 hours", "tomorrow at 8 PM", "Monday morning", etc.
-4. Do not invent a precise time when the user did not provide enough information. For phrases like "tomorrow evening" without a clear convention, use "clarify".
-5. scheduled_for_iso must include a timezone offset.
-6. Reject times in the past. If the requested time is ambiguous or already passed, use "clarify".
-7. The user's original wording may be in English, Hindi, or Hinglish.
-8. For list/cancel/edit requests, do not create a new reminder.
-9. A reminder message should not include the words "remind me"; extract only what the user wants to be reminded about.
-10. If the message is unrelated to reminders, use "unknown".
+
+- Return only JSON.
+- Understand English, Hindi, and Hinglish.
+- For create_reminder, extract the actual task into "message".
+- Resolve expressions such as "in 5 minutes", "tomorrow", and "next Monday".
+- scheduled_for_iso must contain a timezone offset.
+- Never invent a date or time.
+- If the date or time is unclear, use "clarify".
+- For list_reminders, next_reminder, cancel_reminder, and edit_reminder, do not create a new reminder.
+- For cancel_reminder, use reminder_id if the user gives one.
+- Otherwise, place identifying words in search_text.
+- Do not include "remind me" in the extracted task message.
+- creative_reply should be short, warm, and slightly creative.
+- creative_reply must not invent reminder IDs, saved reminders, dates, or results.
 `;
 
-  const response = await ai.models.generateContent({
+  const result = await ai.models.generateContent({
     model,
     contents: prompt,
     config: {
       responseMimeType: "application/json",
-      responseSchema: reminderSchema,
-      temperature: 0
+      responseSchema,
+      temperature: 0.7
     }
   });
 
-  const raw = response.text?.trim();
-  if (!raw) throw new Error("Gemini returned an empty response.");
+  const raw = result.text?.trim();
+
+  if (!raw) {
+    throw new Error("Gemini returned an empty response.");
+  }
 
   return JSON.parse(raw);
-}
+    }
