@@ -17,6 +17,55 @@ const maxMessageLength = Number(
   process.env.MAX_MESSAGE_LENGTH || 2000
 );
 
+/*
+ * Temporary in-memory conversation cache.
+ *
+ * Structure:
+ * Map<phone, [{ role: "user" | "assistant", content: string }]>
+ *
+ * This is not saved in MongoDB.
+ * It will be cleared if Render restarts or redeploys.
+ */
+const conversationCache = new Map();
+
+const MAX_HISTORY_MESSAGES = 5;
+const HISTORY_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+
+function getConversationHistory(phone) {
+  const record = conversationCache.get(phone);
+
+  if (!record) {
+    return [];
+  }
+
+  const isExpired =
+    Date.now() - record.updatedAt > HISTORY_EXPIRY_MS;
+
+  if (isExpired) {
+    conversationCache.delete(phone);
+    return [];
+  }
+
+  return record.messages;
+}
+
+function saveConversationMessage(phone, role, content) {
+  const currentHistory = getConversationHistory(phone);
+
+  const updatedHistory = [
+    ...currentHistory,
+    {
+      role,
+      content: String(content).slice(0, 4000)
+    }
+  ].slice(-MAX_HISTORY_MESSAGES);
+
+  conversationCache.set(phone, {
+    messages: updatedHistory,
+    updatedAt: Date.now()
+  });
+}
+
 function combineReply(creativeReply, factualReply) {
   const creative = String(
     creativeReply || ""
@@ -30,15 +79,41 @@ function combineReply(creativeReply, factualReply) {
 }
 
 async function respond(req, res, payload) {
+  const phone = req.body.phone;
+  const userMessage = req.body.message;
+  const reply = payload.reply;
+
+  /*
+   * Save only in temporary server memory.
+   * Nothing is written to MongoDB.
+   */
+  if (phone && userMessage && reply) {
+    saveConversationMessage(
+      phone,
+      "user",
+      userMessage
+    );
+
+    saveConversationMessage(
+      phone,
+      "assistant",
+      reply
+    );
+  }
+
+  /*
+   * If this request came from the WhatsApp webhook,
+   * send the reply through the session-text API.
+   */
   if (
     req.isWhatsAppWebhook &&
-    payload.reply &&
-    req.body.phone
+    phone &&
+    reply
   ) {
     try {
       await sendSessionText({
-        phone: req.body.phone,
-        message: payload.reply
+        phone,
+        message: reply
       });
 
       console.log(
@@ -103,9 +178,16 @@ export async function handleChat(req, res) {
 
     await upsertUser(phone, timezone);
 
+    /*
+     * Read the previous five messages from memory.
+     * The current message is not added until a reply is created.
+     */
+    const history = getConversationHistory(phone);
+
     const parsed = await parseUserMessage({
       text,
-      timezone
+      timezone,
+      history
     });
 
     if (parsed.intent === "create_reminder") {
@@ -157,6 +239,7 @@ export async function handleChat(req, res) {
 
     if (parsed.intent === "list_reminders") {
       const reminders = await listUserReminders(phone);
+
       const factualReply =
         await formatReminderList(reminders);
 
