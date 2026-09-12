@@ -17,31 +17,36 @@ function firstValue(...values) {
   return "";
 }
 
-/**
- * Extracts the incoming WhatsApp phone number and message.
- * Fast2SMS may send these fields at the top level or inside
- * a nested data/message object.
- */
 function extractIncomingMessage(payload) {
   const root =
     payload && typeof payload === "object"
       ? payload
       : {};
 
+  const report =
+    Array.isArray(root.whatsapp_reports) &&
+    root.whatsapp_reports.length
+      ? root.whatsapp_reports[0]
+      : null;
+
+  const source = report || root;
+
   const nested =
-    root.data && typeof root.data === "object"
-      ? root.data
-      : root.message && typeof root.message === "object"
-        ? root.message
+    source.data &&
+    typeof source.data === "object"
+      ? source.data
+      : source.message &&
+          typeof source.message === "object"
+        ? source.message
         : {};
 
   const phone = firstValue(
-    root.from,
-    root.phone,
-    root.mobile,
-    root.number,
-    root.customer_mobile,
-    root.sender,
+    source.from,
+    source.phone,
+    source.mobile,
+    source.number,
+    source.customer_mobile,
+    source.sender,
     nested.from,
     nested.phone,
     nested.mobile,
@@ -51,16 +56,20 @@ function extractIncomingMessage(payload) {
   );
 
   const message = firstValue(
-    root.body,
-    root.text,
-    root.message_text,
-    root.user_message,
-    typeof root.message === "string" ? root.message : "",
+    source.body,
+    source.text,
+    source.message_text,
+    source.user_message,
+    typeof source.message === "string"
+      ? source.message
+      : "",
     nested.body,
     nested.text,
     nested.message_text,
     nested.user_message,
-    typeof nested.message === "string" ? nested.message : ""
+    typeof nested.message === "string"
+      ? nested.message
+      : ""
   );
 
   return {
@@ -69,48 +78,55 @@ function extractIncomingMessage(payload) {
   };
 }
 
-/**
- * Fast2SMS WhatsApp Incoming Messages webhook.
- *
- * Configure Fast2SMS with:
- * Event: Incoming Messages
- * Method: POST
- * Content-Type: JSON
- * URL: https://YOUR-RENDER-DOMAIN/webhook
- */
 router.post("/", async (req, res) => {
   try {
-    const { phone, message } = extractIncomingMessage(req.body);
-
-    console.log("Fast2SMS incoming WhatsApp message:", {
+    const {
       phone,
-      message,
-      raw: req.body
-    });
+      message
+    } = extractIncomingMessage(req.body);
+
+    console.log(
+      "Fast2SMS incoming WhatsApp message:",
+      {
+        phone,
+        message
+      }
+    );
 
     if (!phone || !message) {
       return res.status(400).json({
         ok: false,
         error:
-          "Webhook payload did not contain a phone number and message.",
+          "Webhook payload did not contain a phone number " +
+          "and message.",
         received: req.body
       });
     }
 
-    // Reuse the existing Gemini and MongoDB chatbot logic.
     req.body = {
       phone,
       message,
-      timezone: req.body?.timezone || undefined
+      timezone:
+        req.body?.timezone ||
+        process.env.DEFAULT_TIMEZONE ||
+        "Asia/Kolkata"
     };
+
+    // This tells chatbotController.js to send the
+    // generated reply through the WhatsApp session API.
+    req.isWhatsAppWebhook = true;
 
     return handleChat(req, res);
   } catch (error) {
-    console.error("Fast2SMS incoming webhook error:", error);
+    console.error(
+      "Fast2SMS incoming webhook error:",
+      error
+    );
 
     return res.status(500).json({
       ok: false,
-      error: "Unable to process the incoming WhatsApp message."
+      error:
+        "Unable to process the incoming WhatsApp message."
     });
   }
 });
@@ -118,7 +134,8 @@ router.post("/", async (req, res) => {
 router.get("/", (_req, res) => {
   res.json({
     ok: true,
-    service: "fast2sms-incoming-whatsapp-webhook"
+    service:
+      "fast2sms-incoming-whatsapp-webhook"
   });
 });
 
