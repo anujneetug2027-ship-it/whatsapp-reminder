@@ -30,7 +30,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/chat", chatbotRoutes);
 app.use("/api/reminders", reminderRoutes);
-app.use("/api/webhook", webhookRoutes);
+app.use("/webhook", webhookRoutes);
 
 app.use(express.static(path.join(__dirname, "public")));
 
