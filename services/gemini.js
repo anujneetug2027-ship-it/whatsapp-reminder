@@ -1,86 +1,20 @@
-import { GoogleGenAI, Type } from "@google/genai";
+const OPENROUTER_URL =
+  "https://openrouter.ai/api/v1/chat/completions";
 
+// Keep using the existing environment variable name.
+// Put your OpenRouter API key inside GEMINI_API_KEY.
 const apiKey = process.env.GEMINI_API_KEY;
-const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+// We intentionally use OpenRouter's free router.
+// This avoids depending on the old Gemini model setting.
+const model = "openrouter/free";
 
 if (!apiKey) {
-  console.warn("GEMINI_API_KEY is not configured.");
+  console.warn(
+    "GEMINI_API_KEY is not configured. " +
+    "Add your OpenRouter API key to this existing variable."
+  );
 }
-
-const ai = apiKey
-  ? new GoogleGenAI({ apiKey })
-  : null;
-
-const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    intent: {
-      type: Type.STRING,
-      enum: [
-        "create_reminder",
-        "list_reminders",
-        "next_reminder",
-        "cancel_reminder",
-        "edit_reminder",
-        "clarify",
-        "unknown"
-      ]
-    },
-
-    message: {
-      type: Type.STRING,
-      description:
-        "The task to remind the user about. Empty when not applicable."
-    },
-
-    scheduled_for_iso: {
-      type: Type.STRING,
-      description:
-        "ISO datetime with timezone offset. Empty when not applicable."
-    },
-
-    timezone: {
-      type: Type.STRING,
-      description:
-        "IANA timezone such as Asia/Kolkata."
-    },
-
-    reminder_id: {
-      type: Type.STRING,
-      description:
-        "Reminder ID if the user explicitly mentions one."
-    },
-
-    search_text: {
-      type: Type.STRING,
-      description:
-        "Words identifying a reminder to cancel."
-    },
-
-    clarification_question: {
-      type: Type.STRING,
-      description:
-        "A short question if more information is required."
-    },
-
-    creative_reply: {
-      type: Type.STRING,
-      description:
-        "A short, friendly, creative response. Do not invent IDs, dates, or database results."
-    }
-  },
-
-  required: [
-    "intent",
-    "message",
-    "scheduled_for_iso",
-    "timezone",
-    "reminder_id",
-    "search_text",
-    "clarification_question",
-    "creative_reply"
-  ]
-};
 
 function getLocalDateTime(timezone) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -98,9 +32,43 @@ function getLocalDateTime(timezone) {
   return formatter.format(new Date());
 }
 
-export async function parseUserMessage({ text, timezone }) {
-  if (!ai) {
-    throw new Error("Gemini is not configured.");
+function formatHistory(history = []) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return "No previous conversation is available.";
+  }
+
+  return history
+    .slice(-5)
+    .map((item) => {
+      const speaker =
+        item.role === "assistant"
+          ? "Assistant"
+          : "User";
+
+      return `${speaker}: ${item.content}`;
+    })
+    .join("\n");
+}
+
+function cleanJsonResponse(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+export async function parseUserMessage({
+  text,
+  timezone,
+  history = []
+}) {
+  if (!apiKey) {
+    throw new Error(
+      "OpenRouter is not configured. " +
+      "Add your OpenRouter key to GEMINI_API_KEY."
+    );
   }
 
   const userTimezone =
@@ -114,12 +82,26 @@ export async function parseUserMessage({ text, timezone }) {
   const prompt = `
 You are a smart, friendly WhatsApp reminder assistant.
 
-User message:
+RECENT CONVERSATION:
+${formatHistory(history)}
+
+NEW USER MESSAGE:
 """${text}"""
 
 User timezone: ${userTimezone}
 Current UTC time: ${currentUtc}
 Current local date and time: ${currentLocal}
+
+Use the recent conversation to understand follow-up messages.
+
+For example:
+
+User: Remind me to pay the electricity bill
+Assistant: What time should I set it for?
+User: 4:54pm today
+
+In this example, combine the task from the earlier message
+with the date and time from the latest message.
 
 Identify the user's intent and return only valid JSON.
 
@@ -156,36 +138,117 @@ The message is unrelated to the reminder system.
 
 Rules:
 
-- Return only JSON.
+- Return only valid JSON.
+- Do not use Markdown.
 - Understand English, Hindi, and Hinglish.
-- For create_reminder, extract the actual task into "message".
-- Resolve expressions such as "in 5 minutes", "tomorrow", and "next Monday".
+- Use the recent conversation when the latest message is incomplete.
+- For create_reminder, combine relevant task and time details
+  from the recent conversation.
+- Extract the actual task into "message".
+- Do not include "remind me" in the extracted task message.
+- Resolve expressions such as "in 5 minutes", "today",
+  "tomorrow", "tonight", and "next Monday".
 - scheduled_for_iso must contain a timezone offset.
 - Never invent a date or time.
 - If the date or time is unclear, use "clarify".
-- For list_reminders, next_reminder, cancel_reminder, and edit_reminder, do not create a new reminder.
+- For list_reminders, next_reminder, cancel_reminder,
+  and edit_reminder, do not create a new reminder.
 - For cancel_reminder, use reminder_id if the user gives one.
 - Otherwise, place identifying words in search_text.
-- Do not include "remind me" in the extracted task message.
-- creative_reply should be short, warm, and slightly creative.
-- creative_reply must not invent reminder IDs, saved reminders, dates, or results.
+- creative_reply should be short, warm, friendly,
+  and slightly creative.
+- creative_reply must not invent reminder IDs, saved reminders,
+  dates, or database results.
+
+Return JSON with exactly these fields:
+
+{
+  "intent": "create_reminder | list_reminders | next_reminder | cancel_reminder | edit_reminder | clarify | unknown",
+  "message": "",
+  "scheduled_for_iso": "",
+  "timezone": "",
+  "reminder_id": "",
+  "search_text": "",
+  "clarification_question": "",
+  "creative_reply": ""
+}
 `;
 
-  const result = await ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature: 0.7
-    }
+  const response = await fetch(OPENROUTER_URL, {
+    method: "POST",
+
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+
+    body: JSON.stringify({
+      model,
+
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a precise JSON-only reminder assistant."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+
+      temperature: 0.7,
+
+      response_format: {
+        type: "json_object"
+      }
+    })
   });
 
-  const raw = result.text?.trim();
+  const responseText = await response.text();
 
-  if (!raw) {
-    throw new Error("Gemini returned an empty response.");
+  let data;
+
+  try {
+    data = JSON.parse(responseText);
+  } catch {
+    data = {
+      raw: responseText
+    };
   }
 
-  return JSON.parse(raw);
-    }
+  if (!response.ok) {
+    const error = new Error(
+      `OpenRouter request failed with HTTP ${response.status}`
+    );
+
+    error.status = response.status;
+    error.response = data;
+
+    throw error;
+  }
+
+  const raw = data?.choices?.[0]?.message?.content;
+
+  if (!raw) {
+    throw new Error(
+      "OpenRouter returned an empty response."
+    );
+  }
+
+  const cleanedResponse = cleanJsonResponse(raw);
+
+  try {
+    return JSON.parse(cleanedResponse);
+  } catch (error) {
+    console.error(
+      "OpenRouter returned invalid JSON:",
+      raw
+    );
+
+    throw new Error(
+      "OpenRouter returned an invalid reminder response."
+    );
+  }
+}
