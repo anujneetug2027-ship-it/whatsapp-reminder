@@ -1,18 +1,17 @@
 const OPENROUTER_URL =
   "https://openrouter.ai/api/v1/chat/completions";
 
-// Keep using the existing environment variable name.
-// Put your OpenRouter API key inside GEMINI_API_KEY.
+// Keep the existing environment variable name.
+// Store your OpenRouter API key in GEMINI_API_KEY.
 const apiKey = process.env.GEMINI_API_KEY;
 
-// We intentionally use OpenRouter's free router.
-// This avoids depending on the old Gemini model setting.
+// OpenRouter's free model router.
 const model = "openrouter/free";
 
 if (!apiKey) {
   console.warn(
     "GEMINI_API_KEY is not configured. " +
-    "Add your OpenRouter API key to this existing variable."
+      "Add your OpenRouter API key to this existing variable."
   );
 }
 
@@ -41,9 +40,7 @@ function formatHistory(history = []) {
     .slice(-5)
     .map((item) => {
       const speaker =
-        item.role === "assistant"
-          ? "Assistant"
-          : "User";
+        item.role === "assistant" ? "Assistant" : "User";
 
       return `${speaker}: ${item.content}`;
     })
@@ -67,7 +64,7 @@ export async function parseUserMessage({
   if (!apiKey) {
     throw new Error(
       "OpenRouter is not configured. " +
-      "Add your OpenRouter key to GEMINI_API_KEY."
+        "Add your OpenRouter key to GEMINI_API_KEY."
     );
   }
 
@@ -88,41 +85,37 @@ ${formatHistory(history)}
 NEW USER MESSAGE:
 """${text}"""
 
-User timezone: ${userTimezone}
-Current UTC time: ${currentUtc}
-Current local date and time: ${currentLocal}
+USER TIMEZONE:
+${userTimezone}
 
-Use the recent conversation to understand follow-up messages.
+CURRENT UTC TIME:
+${currentUtc}
 
-For example:
+CURRENT LOCAL DATE AND TIME:
+${currentLocal}
+
+Use the recent conversation to understand incomplete follow-up messages.
+
+Example:
 
 User: Remind me to pay the electricity bill
 Assistant: What time should I set it for?
 User: 4:54pm today
 
-In this example, combine the task from the earlier message
-with the date and time from the latest message.
+In this example, the final message is a continuation of the
+earlier message. Combine the task from the earlier message with
+the date and time from the latest message.
 
-Identify the user's intent and return only valid JSON.
-
-Supported intents:
+SUPPORTED INTENTS:
 
 create_reminder:
 The user wants to create a reminder.
 
 list_reminders:
 The user wants to see all active reminders.
-Examples:
-- list my reminders
-- show my reminders
-- what reminders do I have?
 
 next_reminder:
-The user wants to know their nearest upcoming reminder.
-Examples:
-- what is my next reminder?
-- when is my next reminder?
-- tell me my upcoming reminder
+The user wants to know the nearest upcoming reminder.
 
 cancel_reminder:
 The user wants to cancel an existing reminder.
@@ -136,29 +129,82 @@ Important information is missing or ambiguous.
 unknown:
 The message is unrelated to the reminder system.
 
-Rules:
+DATE AND TIME RULES:
+
+- If the user mentions only a day number, such as "20", "on 20",
+  or "20th", interpret it as that day of the CURRENT MONTH in
+  the user's timezone, unless another month or year is explicitly
+  mentioned.
+
+- Example:
+  "Remind me to pay electricity bill on 20 at 12 noon"
+  means the 20th day of the current month at 12:00 PM.
+
+- "12 noon" means 12:00 PM.
+- "12 midnight" means 12:00 AM.
+- "4:54pm" means 16:54.
+- "tomorrow" must be calculated using the user's timezone.
+- "tonight" means the evening of the current day.
+- If a month is explicitly mentioned, use that month.
+- If a year is explicitly mentioned, use that year.
+- If the requested date and time have already passed, do not silently
+  schedule it in the past. Use "clarify" and ask whether the user
+  means the next month or another date.
+- Never invent a date or time.
+- scheduled_for_iso must contain a timezone offset.
+
+LANGUAGE RULES:
+
+- Reply in the same language style used by the user.
+- If the user writes in English, use natural English.
+- If the user writes in Hindi using Devanagari, reply in Hindi.
+- If the user writes in Hinglish using English letters, reply in
+  Hinglish using English letters.
+- Do not force English when the user is speaking Hinglish.
+- Keep replies friendly, natural, and concise.
+
+REMINDER MESSAGE RULES:
+
+- For create_reminder, write a short, natural, slightly creative
+  notification in the "message" field.
+- Do not include the words "remind me" in the reminder message.
+- Make the reminder sound like a friendly personal nudge.
+- Keep it directly related to the user's task.
+- Do not invent extra tasks, amounts, dates, or details.
+- Put the complete reminder notification in WhatsApp bold format
+  using SINGLE asterisks.
+- Use *text*, not **text**.
+
+Examples:
+
+*Aaj electricity bill bharna hai, yaad hai? 💡*
+
+*Electricity bill ka time ho gaya hai—payment kar dena. ⚡*
+
+*Aaj revision karna hai. Ready ho? 📚*
+
+WHATSAPP RESPONSE RULES:
+
+- creative_reply should be short, warm, friendly, and slightly creative.
+- Write creative_reply in the same language style as the user.
+- Do not put the actual reminder notification inside creative_reply.
+- Do not invent reminder IDs, saved reminders, dates, or database results.
+- The backend will add the actual reminder ID and confirmed time.
+
+GENERAL RULES:
 
 - Return only valid JSON.
-- Do not use Markdown.
+- Do not use Markdown outside the required WhatsApp asterisks
+  inside the "message" field.
 - Understand English, Hindi, and Hinglish.
-- Use the recent conversation when the latest message is incomplete.
+- Use recent conversation history when the latest message is incomplete.
 - For create_reminder, combine relevant task and time details
-  from the recent conversation.
-- Extract the actual task into "message".
-- Do not include "remind me" in the extracted task message.
-- Resolve expressions such as "in 5 minutes", "today",
-  "tomorrow", "tonight", and "next Monday".
-- scheduled_for_iso must contain a timezone offset.
-- Never invent a date or time.
-- If the date or time is unclear, use "clarify".
-- For list_reminders, next_reminder, cancel_reminder,
-  and edit_reminder, do not create a new reminder.
+  from previous messages.
+- For list_reminders, next_reminder, cancel_reminder, and edit_reminder,
+  do not create a new reminder.
 - For cancel_reminder, use reminder_id if the user gives one.
 - Otherwise, place identifying words in search_text.
-- creative_reply should be short, warm, friendly,
-  and slightly creative.
-- creative_reply must not invent reminder IDs, saved reminders,
-  dates, or database results.
+- If important information is missing, use "clarify".
 
 Return JSON with exactly these fields:
 
@@ -190,7 +236,7 @@ Return JSON with exactly these fields:
         {
           role: "system",
           content:
-            "You are a precise JSON-only reminder assistant."
+            "You are a precise JSON-only WhatsApp reminder assistant."
         },
         {
           role: "user",
@@ -229,11 +275,12 @@ Return JSON with exactly these fields:
     throw error;
   }
 
-  const raw = data?.choices?.[0]?.message?.content;
+  const raw =
+    data?.choices?.[0]?.message?.content;
 
   if (!raw) {
     throw new Error(
-      "OpenRouter returned an empty response."
+      "OpenRouter returned an empty assistant response."
     );
   }
 
@@ -241,7 +288,7 @@ Return JSON with exactly these fields:
 
   try {
     return JSON.parse(cleanedResponse);
-  } catch (error) {
+  } catch {
     console.error(
       "OpenRouter returned invalid JSON:",
       raw
