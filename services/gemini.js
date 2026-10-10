@@ -286,16 +286,90 @@ Return JSON with exactly these fields:
 
   const cleanedResponse = cleanJsonResponse(raw);
 
+  let parsed;
+
   try {
-    return JSON.parse(cleanedResponse);
+    parsed = JSON.parse(cleanedResponse);
   } catch {
-    console.error(
-      "OpenRouter returned invalid JSON:",
-      raw
+    // Some free-model routes occasionally return a safety/status string
+    // instead of the requested JSON (for example: "User Safety: safe").
+    // Do not turn that provider/model quirk into a webhook 500 or retry storm.
+    console.warn(
+      "OpenRouter returned non-JSON content; using safe fallback.",
+      {
+        model,
+        contentPreview: String(raw).slice(0, 160)
+      }
     );
 
-    throw new Error(
-      "OpenRouter returned an invalid reminder response."
-    );
+    return {
+      intent: "unknown",
+      message: "",
+      scheduled_for_iso: "",
+      timezone: userTimezone,
+      reminder_id: "",
+      search_text: "",
+      clarification_question: "",
+      creative_reply: ""
+    };
   }
+
+  // Validate the model output before it reaches reminder/database logic.
+  const allowedIntents = new Set([
+    "create_reminder",
+    "list_reminders",
+    "next_reminder",
+    "cancel_reminder",
+    "edit_reminder",
+    "clarify",
+    "unknown"
+  ]);
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !allowedIntents.has(parsed.intent)
+  ) {
+    console.warn(
+      "OpenRouter returned JSON with an invalid schema; using safe fallback.",
+      { model }
+    );
+
+    return {
+      intent: "unknown",
+      message: "",
+      scheduled_for_iso: "",
+      timezone: userTimezone,
+      reminder_id: "",
+      search_text: "",
+      clarification_question: "",
+      creative_reply: ""
+    };
+  }
+
+  // Normalize every expected field to a string. This prevents malformed
+  // model output (nulls, numbers, arrays) from breaking controller logic.
+  const stringFields = [
+    "message",
+    "scheduled_for_iso",
+    "timezone",
+    "reminder_id",
+    "search_text",
+    "clarification_question",
+    "creative_reply"
+  ];
+
+  for (const field of stringFields) {
+    if (typeof parsed[field] !== "string") {
+      parsed[field] = "";
+    }
+  }
+
+  if (!parsed.timezone) {
+    parsed.timezone = userTimezone;
+  }
+
+  return parsed;
 }
+  
