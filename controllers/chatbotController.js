@@ -167,6 +167,11 @@ export async function handleChat(req, res) {
       });
     }
 
+    // Support-prefixed messages are intentionally silent (including direct API calls).
+    if (text.trimStart().toLowerCase().startsWith("/support")) {
+      return res.status(200).json({ ok: true, ignored: true });
+    }
+
     if (text.length > maxMessageLength) {
       return res.status(400).json({
         ok: false,
@@ -176,7 +181,38 @@ export async function handleChat(req, res) {
       });
     }
 
-    await upsertUser(phone, timezone);
+    const displayName = String(req.body.name || req.body.userName || "").trim().slice(0, 80);
+    const user = await upsertUser(phone, timezone, displayName);
+    const name = displayName || user?.name || "";
+
+    // Handle greetings/help locally: no AI call, faster response, consistent wording.
+    const normalizedText = text.toLowerCase().replace(/[!.,?]+$/g, "").trim();
+    const greeting = /^(hi|hello|hey|hii+|heyy+|good morning|good afternoon|good evening)$/.test(normalizedText);
+    const asksHow = /^(how|how do i|how can i|what can you do|help|examples|commands|how to)\b/.test(normalizedText);
+
+    if (greeting || asksHow) {
+      const greetingLine = greeting
+        ? `Hey${name ? ` ${name}` : ""}! 👋 I'm your personal WhatsApp reminder assistant from AmbikaShelf.`
+        : `Of course${name ? `, ${name}` : ""}! Here's how to use me:`;
+      const help = [
+        "",
+        "You can message me naturally to:",
+        "• Set a reminder — “Remind me to study Biology tomorrow at 7 PM.”",
+        "• List reminders — “Show my reminders.”",
+        "• Check the next one — “What's my next reminder?”",
+        "• Cancel one — “Cancel my Biology reminder” or include its ID.",
+        "• Ask how something works — I'll explain with examples.",
+        "",
+        "Tip: include the task and a clear date/time. You can write in English, Hindi, or Hinglish; I'll match your language.",
+        "",
+        "— Developed by AmbikaShelf"
+      ].join("\n");
+      return respond(req, res, {
+        ok: true,
+        intent: greeting ? "greeting" : "help",
+        reply: `${greetingLine}\n${help}`
+      });
+    }
 
     /*
      * Read the previous five messages from memory.
@@ -338,9 +374,14 @@ export async function handleChat(req, res) {
       ok: true,
       intent: parsed.intent,
       reply:
-        "I’m your reminder assistant 🌟\n\n" +
-        "You can ask me to create, list, cancel, " +
-        "or find your next reminder."
+        (parsed.explanation || parsed.creative_reply || "").trim() ||
+        `I can help with reminders${name ? `, ${name}` : ""}. For example:\n\n` +
+        `• “Remind me to revise Chemistry tomorrow at 6 PM.”\n` +
+        `• “Show my reminders.”\n` +
+        `• “When is my next reminder?”\n` +
+        `• “Cancel my Chemistry reminder.”\n\n` +
+        `Tell me what you'd like to do, and I'll guide you step by step.\n\n` +
+        `— Developed by AmbikaShelf`
     });
   } catch (error) {
     console.error("Chatbot error:", error);
@@ -355,4 +396,5 @@ export async function handleChat(req, res) {
           : undefined
     });
   }
-}
+  }
+  
