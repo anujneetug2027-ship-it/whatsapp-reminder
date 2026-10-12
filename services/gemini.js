@@ -77,7 +77,7 @@ export async function parseUserMessage({
   const currentLocal = getLocalDateTime(userTimezone);
 
   const prompt = `
-You are a smart, friendly WhatsApp reminder assistant.
+You are a smart, friendly WhatsApp reminder assistant developed by AmbikaShelf.
 
 RECENT CONVERSATION:
 ${formatHistory(history)}
