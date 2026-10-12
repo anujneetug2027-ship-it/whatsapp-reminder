@@ -1,62 +1,141 @@
 import Reminder from "../models/Reminder.js";
+import User from "../models/User.js";
+import { createReminderId } from "../utils/ids.js";
+import {
+  formatReminderTime,
+  getTimeZone
+} from "../utils/time.js";
 
-export async function getReminders(req, res) {
-  const status = req.query.status;
+export async function upsertUser(phone, timezone, name = "") {
+  const tz = getTimeZone(timezone);
 
-  const filter = {};
-  if (status) filter.status = status;
-
-  const reminders = await Reminder.find(filter)
-    .sort({ scheduledFor: 1 })
-    .limit(200);
-
-  res.json({
-    ok: true,
-    count: reminders.length,
-    reminders
-  });
-}
-
-export async function getReminderStats(_req, res) {
-  const [total, scheduled, sent, failed, cancelled] = await Promise.all([
-    Reminder.countDocuments(),
-    Reminder.countDocuments({ status: "scheduled" }),
-    Reminder.countDocuments({ status: "sent" }),
-    Reminder.countDocuments({ status: "failed" }),
-    Reminder.countDocuments({ status: "cancelled" })
-  ]);
-
-  res.json({
-    ok: true,
-    total,
-    scheduled,
-    sent,
-    failed,
-    cancelled
-  });
-}
-
-export async function cancelReminderById(req, res) {
-  const reminder = await Reminder.findOneAndUpdate(
+  return User.findOneAndUpdate(
+    { phone },
     {
-      reminderId: req.params.id,
-      status: "scheduled"
+      $set: {
+        timezone: tz,
+        lastSeenAt: new Date(),
+        ...(name ? { name: String(name).trim().slice(0, 80) } : {})
+      }
     },
     {
-      $set: { status: "cancelled" }
-    },
-    { new: true }
+      upsert: true,
+      new: true
+    }
   );
+}
 
-  if (!reminder) {
-    return res.status(404).json({
-      ok: false,
-      error: "Active reminder not found."
-    });
+export async function createReminder({
+  phone,
+  message,
+  scheduledFor,
+  timezone,
+  createdFromText
+}) {
+  const date = new Date(scheduledFor);
+
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error("Invalid reminder date/time.");
   }
 
-  res.json({
-    ok: true,
-    reminder
+  if (date.getTime() <= Date.now()) {
+    throw new Error("Reminder time must be in the future.");
+  }
+
+  const reminder = await Reminder.create({
+    phone,
+    message: message.trim(),
+    scheduledFor: date,
+    timezone: getTimeZone(timezone),
+    createdFromText,
+    reminderId: createReminderId()
+  });
+
+  return reminder;
+}
+
+export async function listUserReminders(phone) {
+  return Reminder.find({
+    phone,
+    status: {
+      $in: ["scheduled", "processing"]
+    }
+  })
+    .sort({ scheduledFor: 1 })
+    .limit(50);
+}
+
+export async function getNextReminder(phone) {
+  return Reminder.findOne({
+    phone,
+    status: {
+      $in: ["scheduled", "processing"]
+    },
+    scheduledFor: {
+      $gt: new Date()
+    }
+  }).sort({
+    scheduledFor: 1
   });
 }
+
+export async function cancelReminder({
+  phone,
+  reminderId,
+  searchText
+}) {
+  const filter = {
+    phone,
+    status: "scheduled"
+  };
+
+  if (reminderId) {
+    filter.reminderId = reminderId;
+  } else if (searchText) {
+    filter.message = {
+      $regex: searchText,
+      $options: "i"
+    };
+  } else {
+    throw new Error(
+      "Please provide a reminder ID or description."
+    );
+  }
+
+  return Reminder.findOneAndUpdate(
+    filter,
+    {
+      $set: {
+        status: "cancelled"
+      }
+    },
+    {
+      new: true
+    }
+  );
+}
+
+export async function formatReminderList(reminders) {
+  if (!reminders.length) {
+    return "You don't have any active reminders right now.";
+  }
+
+  const lines = reminders.map((reminder, index) => {
+    const time = formatReminderTime(
+      reminder.scheduledFor,
+      reminder.timezone
+    );
+
+    return (
+      `${index + 1}. ${time}\n` +
+      `   🔔 ${reminder.message}\n` +
+      `   ID: ${reminder.reminderId}`
+    );
+  });
+
+  return (
+    `📋 Your active reminders:\n\n` +
+    lines.join("\n\n")
+  );
+        }
+        
