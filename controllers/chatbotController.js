@@ -191,10 +191,22 @@ export async function handleChat(req, res) {
     const asksHow = /^(how|how do i|how can i|what can you do|help|examples|commands|how to)\b/.test(normalizedText);
 
     if (greeting || asksHow) {
-      const greetingLine = greeting
-        ? `Hey${name ? ` ${name}` : ""}! 👋 I'm your personal WhatsApp reminder assistant from AmbikaShelf.`
-        : `Of course${name ? `, ${name}` : ""}! Here's how to use me:`;
+      if (greeting) {
+        const greetingMessage =
+          `Hey${name ? ` ${name}` : ""} 👋\\n` +
+          `I am your *Personal Reminder Assistant* developed by AmbikaShelf.\\n` +
+          `📌 Ask me to create reminders, and I'll notify you when it's time!\\n` +
+          `I can also cancel, edit, or list your upcoming reminders!`;
+
+        return respond(req, res, {
+          ok: true,
+          intent: "greeting",
+          reply: greetingMessage
+        });
+      }
+
       const help = [
+        `Of course${name ? `, ${name}` : ""}! Here's how to use me:`,
         "",
         "You can message me naturally to:",
         "• Set a reminder — “Remind me to study Biology tomorrow at 7 PM.”",
@@ -206,11 +218,12 @@ export async function handleChat(req, res) {
         "Tip: include the task and a clear date/time. You can write in English, Hindi, or Hinglish; I'll match your language.",
         "",
         "— Developed by AmbikaShelf"
-      ].join("\n");
+      ].join("\\n");
+
       return respond(req, res, {
         ok: true,
-        intent: greeting ? "greeting" : "help",
-        reply: `${greetingLine}\n${help}`
+        intent: "help",
+        reply: help
       });
     }
 
@@ -396,4 +409,5 @@ export async function handleChat(req, res) {
           : undefined
     });
   }
-}
+    }
+    
