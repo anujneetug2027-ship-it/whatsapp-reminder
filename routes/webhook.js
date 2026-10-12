@@ -3,195 +3,151 @@ import crypto from "node:crypto";
 import { handleChat } from "../controllers/chatbotController.js";
 
 const router = express.Router();
-
-// Provider retries are common when a webhook takes too long to acknowledge.
-// Acknowledge immediately, then process the message in the background.
 const DEDUPE_TTL_MS = 5 * 60 * 1000;
 const MAX_DEDUPE_ENTRIES = 5000;
 const seenMessages = new Map();
 
 function firstValue(...values) {
   for (const value of values) {
-    if (
-      value !== undefined &&
-      value !== null &&
-      typeof value !== "object" &&
-      String(value).trim()
-    ) {
-      return String(value).trim();
+    if (typeof value === "string" || typeof value === "number") {
+      const result = String(value).trim();
+      if (result) return result;
     }
   }
   return "";
 }
-
-function objectOrEmpty(value) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
+function obj(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function extractIncomingMessage(payload) {
-  const root = objectOrEmpty(payload);
+  const root = obj(payload);
+  // Fast2SMS Standard/SIMPLIFIED webhook payload.
   const report = Array.isArray(root.whatsapp_reports) && root.whatsapp_reports.length
-    ? objectOrEmpty(root.whatsapp_reports[0])
-    : null;
+    ? obj(root.whatsapp_reports[0]) : null;
   const source = report || root;
-  const nested = objectOrEmpty(source.data);
-  const nestedMessage = objectOrEmpty(source.message);
-  const dataMessage = objectOrEmpty(nested.message);
-  const candidates = [source, nested, nestedMessage, dataMessage, root];
 
-  let phone = "";
-  let message = "";
-  let providerMessageId = "";
+  // Fast2SMS META DIRECT format: entry[].changes[].value.contacts/messages.
+  const entry = Array.isArray(root.entry) ? obj(root.entry[0]) : {};
+  const change = Array.isArray(entry.changes) ? obj(entry.changes[0]) : {};
+  const value = obj(change.value);
+  const contact = Array.isArray(value.contacts) ? obj(value.contacts[0]) : {};
+  const profile = obj(contact.profile);
+  const metaMessage = Array.isArray(value.messages) ? obj(value.messages[0]) : {};
+  const metaText = obj(metaMessage.text);
+
+  const nested = obj(source.data);
+  const nestedMessage = obj(source.message);
+  const candidates = [
+    source, nested, nestedMessage, obj(nested.message), root,
+    value, contact, profile, metaMessage, metaText
+  ];
+
+  let phone = firstValue(metaMessage.from, contact.wa_id);
+  let message = firstValue(metaText.body);
+  let name = firstValue(profile.name);
+  let providerMessageId = firstValue(metaMessage.id);
 
   for (const item of candidates) {
-    phone ||= firstValue(
-      item.from, item.phone, item.mobile, item.number,
+    phone ||= firstValue(item.from, item.phone, item.mobile, item.number,
       item.customer_mobile, item.sender, item.wa_id,
-      item.contact?.wa_id, item.contact?.phone
-    );
-    message ||= firstValue(
-      item.body, item.text, item.message_text, item.user_message,
-      typeof item.message === "string" ? item.message : "",
-      item.content
-    );
-    providerMessageId ||= firstValue(
-      item.message_id, item.messageId, item.msg_id, item.msgId,
-      item.wamid, item.wam_id, item.id, item.event_id, item.eventId
-    );
+      obj(item.contact).wa_id, obj(item.contact).phone);
+    message ||= firstValue(item.body, item.text, item.message_text,
+      item.user_message, typeof item.message === "string" ? item.message : "",
+      item.content);
+    name ||= firstValue(item.name, item.profile_name, item.contact_name,
+      obj(item.profile).name, obj(item.contact).name);
+    providerMessageId ||= firstValue(item.message_id, item.messageId,
+      item.msg_id, item.msgId, item.wamid, item.wam_id, item.id,
+      item.event_id, item.eventId);
   }
 
-  return { phone, message, providerMessageId, source };
+  return { phone, message, name, providerMessageId, source: source, root };
 }
 
-function makeDedupeKey({ phone, message, providerMessageId, source }) {
-  // Prefer the provider's stable ID whenever one is present.
-  if (providerMessageId) {
-    return `id:${phone}:${providerMessageId}`;
-  }
-
-  // Fallback for integrations that omit a message ID. Include common event
-  // timestamps when available; otherwise suppress identical phone+text
-  // deliveries for the short retry window.
-  const eventTimestamp = firstValue(
-    source.timestamp, source.created_at, source.createdAt,
-    source.sent_at, source.sentAt, source.time
-  );
-  const canonical = [
-    phone,
-    message.trim().replace(/\s+/g, " "),
-    eventTimestamp
-  ].join("\n");
-
-  return `hash:${crypto.createHash("sha256").update(canonical).digest("hex")}`;
+function dedupeKey({ phone, message, providerMessageId, source }) {
+  if (providerMessageId) return `id:${phone}:${providerMessageId}`;
+  const timestamp = firstValue(source.timestamp, source.created_at,
+    source.createdAt, source.sent_at, source.sentAt, source.time);
+  return "hash:" + crypto.createHash("sha256")
+    .update([phone, message.trim().replace(/\s+/g, " "), timestamp].join("\n"))
+    .digest("hex");
 }
-
-function cleanupDedupe(now = Date.now()) {
-  for (const [key, timestamp] of seenMessages) {
-    if (now - timestamp > DEDUPE_TTL_MS) seenMessages.delete(key);
-  }
-  while (seenMessages.size > MAX_DEDUPE_ENTRIES) {
-    const oldestKey = seenMessages.keys().next().value;
-    if (oldestKey === undefined) break;
-    seenMessages.delete(oldestKey);
-  }
-}
-
-function alreadySeen(key) {
+function isDuplicate(key) {
   const now = Date.now();
-  cleanupDedupe(now);
-  const previous = seenMessages.get(key);
-  if (previous && now - previous < DEDUPE_TTL_MS) return true;
+  for (const [storedKey, timestamp] of seenMessages) {
+    if (now - timestamp > DEDUPE_TTL_MS) seenMessages.delete(storedKey);
+  }
+  if (seenMessages.has(key)) return true;
   seenMessages.set(key, now);
+  while (seenMessages.size > MAX_DEDUPE_ENTRIES) {
+    seenMessages.delete(seenMessages.keys().next().value);
+  }
   return false;
 }
-
 function backgroundResponse() {
-  // handleChat expects an Express-like response object. The real webhook
-  // response has already been acknowledged to prevent provider retries.
   return {
     statusCode: 200,
-    status(code) {
-      this.statusCode = code;
-      return this;
-    },
+    status(code) { this.statusCode = code; return this; },
     json(payload) {
-      if (this.statusCode >= 400) {
-        console.error("Background webhook processing returned an error:", {
-          status: this.statusCode,
-          error: payload?.error
-        });
-      }
+      if (this.statusCode >= 400) console.error("Background webhook processing error:", {
+        status: this.statusCode, error: payload?.error
+      });
       return payload;
     }
   };
 }
 
 router.post("/", (req, res) => {
-  const extracted = extractIncomingMessage(req.body);
-  const { phone, message, providerMessageId } = extracted;
+  const event = extractIncomingMessage(req.body);
 
-  if (!phone || !message) {
-    console.warn("Ignoring invalid Fast2SMS webhook payload:", {
-      hasPhone: Boolean(phone),
-      hasMessage: Boolean(message),
-      keys: Object.keys(objectOrEmpty(req.body))
-    });
-    // Acknowledge malformed payloads to avoid retry storms; log keys for
-    // diagnosis without dumping personal message content.
-    return res.status(200).json({
-      ok: false,
-      ignored: true,
-      error: "Webhook payload did not contain a phone number and message."
-    });
+  // Fast2SMS can deliver status callbacks as well as incoming messages.
+  // Process only incoming-message events when the event type is present.
+  const eventType = firstValue(event.root.webhook_type, event.source.webhook_type);
+  if (eventType && !["incoming_message", "received"].includes(eventType.toLowerCase())) {
+    return res.status(200).json({ ok: true, ignored: true, reason: "not_incoming_message" });
   }
 
-  const dedupeKey = makeDedupeKey(extracted);
+  const { phone, message, name, providerMessageId } = event;
+  if (!phone || !message) {
+    console.warn("Ignoring invalid Fast2SMS webhook payload:", {
+      hasPhone: Boolean(phone), hasMessage: Boolean(message),
+      keys: Object.keys(obj(req.body))
+    });
+    return res.status(200).json({ ok: false, ignored: true, error: "Missing phone or message." });
+  }
 
-  if (alreadySeen(dedupeKey)) {
-    console.log("Duplicate Fast2SMS webhook ignored:", {
-      phone,
-      providerMessageId: providerMessageId || undefined
-    });
-    return res.status(200).json({
-      ok: true,
-      duplicate: true,
-      accepted: true
-    });
+  // Don't process support-prefixed messages or send an automatic reply.
+  if (message.trimStart().toLowerCase().startsWith("/support")) {
+    return res.status(200).json({ ok: true, ignored: true, reason: "support_command" });
+  }
+
+  const key = dedupeKey(event);
+  if (isDuplicate(key)) {
+    console.log("Duplicate Fast2SMS webhook ignored:", { phone, providerMessageId: providerMessageId || undefined });
+    return res.status(200).json({ ok: true, duplicate: true, accepted: true });
   }
 
   console.log("Fast2SMS webhook accepted:", {
-    phone,
+    phone, name: name || undefined,
     providerMessageId: providerMessageId || undefined,
     messageLength: message.length
   });
-
-  // Respond before database/AI/WhatsApp work. Many webhook providers retry
-  // if their request remains open while a slow model is generating a reply.
   res.status(200).json({ ok: true, accepted: true });
 
   const backgroundReq = {
     body: {
-      phone,
-      message,
-      timezone:
-        firstValue(extracted.source?.timezone, req.body?.timezone) ||
-        process.env.DEFAULT_TIMEZONE ||
-        "Asia/Kolkata"
+      phone, message, name,
+      timezone: firstValue(event.source.timezone, req.body?.timezone) ||
+        process.env.DEFAULT_TIMEZONE || "Asia/Kolkata"
     },
     isWhatsAppWebhook: true
   };
-
   Promise.resolve()
     .then(() => handleChat(backgroundReq, backgroundResponse()))
-    .catch((error) => {
-      console.error("Fast2SMS background processing failed:", error);
-    });
+    .catch(error => console.error("Fast2SMS background processing failed:", error));
 });
 
-router.get("/", (_req, res) => {
-  res.json({ ok: true, service: "fast2sms-incoming-whatsapp-webhook" });
-});
-
+router.get("/", (_req, res) => res.json({ ok: true, service: "fast2sms-incoming-whatsapp-webhook" }));
 export default router;
+    
