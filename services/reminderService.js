@@ -6,7 +6,7 @@ import {
   getTimeZone
 } from "../utils/time.js";
 
-export async function upsertUser(phone, timezone) {
+export async function upsertUser(phone, timezone, name = "") {
   const tz = getTimeZone(timezone);
 
   return User.findOneAndUpdate(
@@ -14,7 +14,8 @@ export async function upsertUser(phone, timezone) {
     {
       $set: {
         timezone: tz,
-        lastSeenAt: new Date()
+        lastSeenAt: new Date(),
+        ...(name ? { name: String(name).trim().slice(0, 80) } : {})
       }
     },
     {
@@ -136,4 +137,5 @@ export async function formatReminderList(reminders) {
     `📋 Your active reminders:\n\n` +
     lines.join("\n\n")
   );
-}
+        }
+        
