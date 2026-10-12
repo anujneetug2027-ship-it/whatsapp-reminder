@@ -155,13 +155,11 @@ DATE AND TIME RULES:
 
 LANGUAGE RULES:
 
-- Reply in the same language style used by the user.
-- If the user writes in English, use natural English.
-- If the user writes in Hindi using Devanagari, reply in Hindi.
-- If the user writes in Hinglish using English letters, reply in
-  Hinglish using English letters.
-- Do not force English when the user is speaking Hinglish.
-- Keep replies friendly, natural, and concise.
+- Use natural English by default.
+- Use Hinglish only when the user writes in Hinglish (Hindi mixed with English in Latin letters).
+- If the user writes Hindi in Devanagari, reply in Hindi.
+- Do not add Hinglish slang to an English message.
+- Keep replies friendly, clear, and concise.
 
 REMINDER MESSAGE RULES:
 
@@ -185,8 +183,10 @@ Examples:
 
 WHATSAPP RESPONSE RULES:
 
-- creative_reply should be short, warm, friendly, and slightly creative.
-- Write creative_reply in the same language style as the user.
+- creative_reply should be short, warm, and friendly, using the user's language style.
+- If the user asks how to do something or asks for an explanation, give a clear, useful step-by-step answer with at least one practical example in the "explanation" field.
+- For general questions, answer helpfully when you know the answer; do not pretend every message is a reminder command.
+- Use English by default; use Hinglish only when the user themselves writes in Hinglish.
 - Do not put the actual reminder notification inside creative_reply.
 - Do not invent reminder IDs, saved reminders, dates, or database results.
 - The backend will add the actual reminder ID and confirmed time.
@@ -216,7 +216,8 @@ Return JSON with exactly these fields:
   "reminder_id": "",
   "search_text": "",
   "clarification_question": "",
-  "creative_reply": ""
+  "creative_reply": "",
+  "explanation": ""
 }
 `;
 
@@ -357,7 +358,8 @@ Return JSON with exactly these fields:
     "reminder_id",
     "search_text",
     "clarification_question",
-    "creative_reply"
+    "creative_reply",
+    "explanation"
   ];
 
   for (const field of stringFields) {
@@ -372,4 +374,5 @@ Return JSON with exactly these fields:
 
   return parsed;
 }
+
   
