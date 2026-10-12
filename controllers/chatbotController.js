@@ -396,5 +396,4 @@ export async function handleChat(req, res) {
           : undefined
     });
   }
-  }
-  
+}
