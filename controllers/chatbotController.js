@@ -218,7 +218,7 @@ export async function handleChat(req, res) {
         "Tip: include the task and a clear date/time. You can write in English, Hindi, or Hinglish; I'll match your language.",
         "",
         "— Developed by AmbikaShelf"
-      ].join("\\n");
+      ].join("\n");
 
       return respond(req, res, {
         ok: true,
