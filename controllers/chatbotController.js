@@ -193,9 +193,9 @@ export async function handleChat(req, res) {
     if (greeting || asksHow) {
       if (greeting) {
         const greetingMessage =
-          `Hey${name ? ` ${name}` : ""} 👋\\n` +
-          `I am your *Personal Reminder Assistant* developed by AmbikaShelf.\\n` +
-          `📌 Ask me to create reminders, and I'll notify you when it's time!\\n` +
+          `Hey${name ? ` ${name}` : ""} 👋 \n` +
+          `I am your *Personal Reminder Assistant* developed by AmbikaShelf. \n` +
+          `📌 Ask me to create reminders, and I'll notify you when it's time! \n` +
           `I can also cancel, edit, or list your upcoming reminders!`;
 
         return respond(req, res, {
